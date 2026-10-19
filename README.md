@@ -4,7 +4,7 @@
 
 **Solution:** Use a one time script to set up KDE Connect to use [Tailscale](https://tailscale.com/) so it works on practially any network, or even when both devices are not on the same network.
 
-This small Bash utility adds a phone's Tailscale IPv4 address to KDE Connect's custom discovery addresses. KDE Connect continues to work completely like normal.
+This Bash script adds a phone's Tailscale IPv4 address to KDE Connect's custom discovery addresses. KDE Connect continues to work completely like normal.
 
 ## Requirements
 
