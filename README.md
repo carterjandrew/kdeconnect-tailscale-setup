@@ -1,12 +1,14 @@
 # KDE Connect Tailscale Setup
 
-**Problem:** [KDE Connect](https://kdeconnect.kde.org/) is *great*, but very often devices cannot find each other on many types of internet (for example on a college campus, in a coffee shop, or 2am in the taco bell parking lot).
+**Problem:** [KDE Connect](https://kdeconnect.kde.org/) is *great*, but very often devices cannot find each other on many types of internet (for example on a college campus, in a coffee shop, or like all of my places of employment and my house sometimes).
 
-**Solution:** Use a one time script to set up KDE connect to use [Tailscale](https://tailscale.com/) so KDE connect works on practially any network, or even when both devices are not on the same network.
+**Solution:** Use a one time script to set up KDE Connect to use [Tailscale](https://tailscale.com/) so it works on practially any network, or even when both devices are not on the same network.
 
-This small Bash utility adds a phone's Tailscale IPv4 address to KDE Connect's custom discovery addresses. KDE Connect still performs its normal encrypted pairing; the script only helps the devices discover each other.
+This small Bash utility adds a phone's Tailscale IPv4 address to KDE Connect's custom discovery addresses. KDE Connect continues to work completely like normal.
 
 ## Requirements
+
+This is a bash script, so we rely on some other tools:
 
 - Linux with KDE Connect and a user session D-Bus
 - Tailscale running on the computer and phone
@@ -22,13 +24,14 @@ for command in bash tailscale jq busctl; do
 done
 ```
 
-Run the utility as your normal desktop user. Do not use `sudo`, because that generally cannot access your graphical session's D-Bus.
+Do not use `sudo` to run this because that generally cannot access your graphical session's D-Bus.
 
 ## Use
 
 > [!WARNING]
 > Don't be dumb, READ BASH SCRIPTS FROM THE INTERNET BEFORE YOU RUN THEM!!!
-> Also, you will need to do some setup on your phone after running this command. See screenshots below.
+> 
+> **Also, you will need to do some setup on your phone after running this command. See screenshots below.**
 
 The *safest* approach is to download and inspect the script before running it:
 
@@ -95,6 +98,34 @@ After running `add` you will need to manually set the IP address on your phone a
 
 ## Phone Setup
 
+### 1. Get your computers Tailnet IP Address
+
+You can do this using
+```sh
+tailscale ip -4
+```
+
+<img width="397" height="68" alt="Get Tailscale IP" src="https://github.com/user-attachments/assets/db02d03b-6b83-4766-8023-013573e4534c" />
+
+### 2. On your phone, open kde connect and click "Pair new device" from the side panel
+
+<img width="1080" height="2340" alt="Open Pair Devices" src="https://github.com/user-attachments/assets/fcf943c0-7556-4e22-bd4f-a2fa244ac59e" />
+
+### 3. Use the hamburger icon in the top left to select "Add devices by IP"
+
+<img width="1080" height="2340" alt="Open IP List" src="https://github.com/user-attachments/assets/3b4a6e58-d3dd-4055-95a3-f918d81c322b" />
+
+### 4. Type in that Tailnet IP address
+
+<img width="1080" height="2340" alt="Enter Tailscale IP Address" src="https://github.com/user-attachments/assets/2b597d27-1996-4ad7-90f9-f0d9d32da675" />
+
+### 5. Now pair the device from your computer
+
+This does not seem to get the request through correctly from phones for some reason
+
+<img width="1080" height="2340" alt="Accept connection" src="https://github.com/user-attachments/assets/919d14ef-b68b-4d3a-b776-1a85b3522e7b" />
+
+Now both devices know to connect to each other over Tailscales Tailnet instead of LAN internet discovery.
 
 ## Network policy
 
