@@ -1,0 +1,3 @@
+[submodule "kdeconnect-kde"]
+	path = kdeconnect-kde
+	url = https://github.com/KDE/kdeconnect-kde
