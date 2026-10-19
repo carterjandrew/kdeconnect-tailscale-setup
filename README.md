@@ -1,124 +1,143 @@
 # KDE Connect Tailscale Setup
 
-> [!TIP]
-> Are you tired of KDE connect being finicky over different networks? Then use this repo! Run it once and expirience superior consistency immediately
+**Problem:** [KDE Connect](https://kdeconnect.kde.org/) is *great*, but very often devices cannot find each other on many types of internet (for example on a college campus, in a coffee shop, or like all of my places of employment and my house sometimes).
 
-`kdeconnect-tailscale` is a small Linux command line interface helper that teaches KDE Connect about Android devices already present in the same Tailscale tailnet. This means it does not embed Tailscale, request an API token, or remain running in the background. It's a one time setup making KDE Connect robust across networks and space, as long as both devices are running Tailscale.
+**Solution:** Use a one time script to set up KDE Connect to use [Tailscale](https://tailscale.com/) so it works on practially any network, or even when both devices are not on the same network.
+
+This small Bash utility adds a phone's Tailscale IPv4 address to KDE Connect's custom discovery addresses. KDE Connect continues to work completely like normal.
 
 ## Requirements
 
-- Linux with a user session D-Bus
-- KDE Connect desktop with its LAN backend (link provider) enabled
-- Tailscale installed, connected, and available as `tailscale` on `PATH`
-- A phone running both Tailscale and KDE Connect
-- Qt 6.5 or newer, CMake 3.22 or newer, and a C++20 compiler to build
-- Both devices running the kde connect app at the time of setup
+This is a bash script, so we rely on some other tools:
 
-The current KDE Connect Android source accepts Tailscale's `100.64.0.0/10` addresses. With an older Android release, also add the desktop's Tailscale IPv4 address using KDE Connect's existing **Add devices by IP** screen.
+- Linux with KDE Connect and a user session D-Bus
+- Tailscale running on the computer and phone
+- KDE Connect's LAN backend enabled on both devices
+- [`jq`](https://jqlang.org/)
+- `busctl`, provided by systemd
 
-## Usage
+Check whether the required commands are available:
 
-### Building and running
-
-With [Nix](https://nixos.org/download/) and flakes enabled, no clone or local build is required. Run the latest version directly from GitHub on NixOS or any other Linux distribution:
-
-```sh
-nix run github:carterjandrew/kdeconnect-tailscale-setup -- peers
+```bash
+for command in bash tailscale jq busctl; do
+    command -v "$command" >/dev/null || printf 'Missing: %s\n' "$command"
+done
 ```
 
-To build the package locally with Nix:
+Do not use `sudo` to run this because that generally cannot access your graphical session's D-Bus.
 
-```sh
-git clone https://github.com/carterjandrew/kdeconnect-tailscale-setup.git
-cd kdeconnect-tailscale-setup
-nix build
-./result/bin/kdeconnect-tailscale peers
+## Use
+
+> [!WARNING]
+> Don't be dumb, READ BASH SCRIPTS FROM THE INTERNET BEFORE YOU RUN THEM!!!
+> 
+> **Also, you will need to do some setup on your phone after running this command. See screenshots below.**
+
+The *safest* approach is to download and inspect the script before running it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/carterjandrew/kdeconnect-tailscale-setup/main/kdeconnect-tailscale
+less kdeconnect-tailscale
 ```
 
-Without Nix clone and build with CMake:
+And then run:
 
-```sh
-git clone https://github.com/carterjandrew/kdeconnect-tailscale-setup.git
-cd kdeconnect-tailscale-setup
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+```bash
+bash kdeconnect-tailscale
 ```
 
-If you have compatability or missing dependency issues, check the `flake.nix` and `flake.lock` files to understand the exact requirements.
+Or, if you really want to, you can run it all in one command:
 
-The resulting executable is `./build/kdeconnect-tailscale`. You can optionally install it with `cmake --install build`; depending on the install prefix.
-
-### CLI usage
-
-The examples below use `kdeconnect-tailscale`. Substitute `nix run github:carterjandrew/kdeconnect-tailscale-setup --` when running from GitHub, or `./build/kdeconnect-tailscale` when using an uninstalled CMake build.
-
-List Android devices visible to the local Tailscale client:
-
-```sh
-kdeconnect-tailscale peers
+```bash
+curl -fsSL https://raw.githubusercontent.com/carterjandrew/kdeconnect-tailscale-setup/main/kdeconnect-tailscale | bash
 ```
 
-Select a device interactively and trigger discovery:
+## Commands
 
-```sh
-kdeconnect-tailscale add
+> [!NOTE]
+> To pass a command through the one-line download form, put arguments after `bash -s --`:
+> 
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/carterjandrew/kdeconnect-tailscale-setup/main/kdeconnect-tailscale \
+>     | bash -s -- add my-phone
+> ```
+
+
+Running without a command is the same as `add`: it lists Android peers in your tailnet and asks which one to configure.
+
+```bash
+bash kdeconnect-tailscale
 ```
 
-The selector can instead be an exact Tailscale hostname, DNS name, node key, or IPv4 address:
+List peers:
 
-```sh
-kdeconnect-tailscale add my-phone
+```bash
+bash kdeconnect-tailscale peers
 ```
 
-KDE Connect performs its normal TLS pairing after discovery. Approve the pairing request on both devices. If Tailscale is restarted or a peer's address changes, rerun:
+Add a peer interactively:
 
-```sh
-kdeconnect-tailscale repair
+```bash
+bash kdeconnect-tailscale add
+bash kdeconnect-tailscale add my-phone
 ```
 
-Other commands are `remove <peer>` and `doctor`. State is stored in `$XDG_CONFIG_HOME/kdeconnect-tailscale/state.json` (normally `~/.config/kdeconnect-tailscale/state.json`). Existing KDE Connect custom addresses not owned by this helper are preserved.
+Repair an obsolete custom address by selecting the existing address and its current Tailscale peer:
 
-## Development and troubleshooting
-
-Use the reproducible development shell when changing the project:
-
-```sh
-nix develop
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+```bash
+bash kdeconnect-tailscale repair
 ```
 
-`nix build` builds the complete package and runs its test suite. If a local checkout has untracked files that Nix needs but is nested inside another Git repository, use `nix build path:.` or `nix develop path:.` so Nix includes the working tree by path.
+The non-interactive form takes the exact old address followed by the Tailscale peer selector:
 
-For CMake build failures, start with a fresh build directory, verify that CMake found Qt 6.5 or newer, and rebuild with verbose output:
-
-```sh
-cmake -E remove_directory build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --verbose
-ctest --test-dir build --output-on-failure
+```bash
+bash kdeconnect-tailscale repair 100.70.1.1 my-phone
 ```
 
-For runtime problems, make sure `tailscale status` works for the current user and KDE Connect is running in the same graphical session, then run:
+After running `add` you will need to manually set the IP address on your phone as well:
 
+## Phone Setup
+
+### 1. Get your computers Tailnet IP Address
+
+You can do this using
 ```sh
-kdeconnect-tailscale doctor
+tailscale ip -4
 ```
 
-The tool requires a user session D-Bus; running it through `sudo` can therefore make KDE Connect unavailable even when it is running normally.
+<img width="397" height="68" alt="Get Tailscale IP" src="https://github.com/user-attachments/assets/db02d03b-6b83-4766-8023-013573e4534c" />
+
+### 2. On your phone, open kde connect and click "Pair new device" from the side panel
+
+<img width="1080" height="2340" alt="Open Pair Devices" src="https://github.com/user-attachments/assets/fcf943c0-7556-4e22-bd4f-a2fa244ac59e" />
+
+### 3. Use the hamburger icon in the top left to select "Add devices by IP"
+
+<img width="1080" height="2340" alt="Open IP List" src="https://github.com/user-attachments/assets/3b4a6e58-d3dd-4055-95a3-f918d81c322b" />
+
+### 4. Type in that Tailnet IP address
+
+<img width="1080" height="2340" alt="Enter Tailscale IP Address" src="https://github.com/user-attachments/assets/2b597d27-1996-4ad7-90f9-f0d9d32da675" />
+
+### 5. Now pair the device from your computer
+
+This does not seem to get the request through correctly from phones for some reason
+
+<img width="1080" height="2340" alt="Accept connection" src="https://github.com/user-attachments/assets/919d14ef-b68b-4d3a-b776-1a85b3522e7b" />
+
+Now both devices know to connect to each other over Tailscales Tailnet instead of LAN internet discovery.
 
 ## Network policy
 
-The tailnet policy and local firewall must permit TCP and UDP ports `1714-1764` in both directions between the selected devices. Tailscale access rules are directional. This utility diagnoses the local integration but deliberately does not modify tailnet policy or firewall rules.
+The tailnet policy and local firewall must permit TCP and UDP ports `1714-1764` in both directions between the devices. Tailscale access rules are directional. This utility checks its immediate dependencies and reports command failures, but it does not modify tailnet policy or firewall rules.
 
 ## Limitations
 
-- This version supports Linux KDE and Tailscale IPv4 only.
-- It relies on `tailscale status --json`, whose schema Tailscale documents as subject to change.
-- It lists peers whose reported operating system is Android. Other KDE Connect targets can still be configured through KDE Connect's normal custom-device mechanism.
-- It is a setup and repair utility, not an availability monitor.
+- Linux systems with systemd's `busctl` are supported.
+- Only Android Tailscale peers are listed.
+- Only Tailscale IPv4 addresses in `100.64.0.0/10` are used.
+- The script relies on `tailscale status --json`, whose schema may change.
+- This is an initial setup and repair utility, not an availability monitor.
 
 ## AI usage disclosure
 
