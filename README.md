@@ -109,21 +109,21 @@ tailscale ip -4
 
 ### 2. On your phone, open kde connect and click "Pair new device" from the side panel
 
-<img width="1080" height="2340" alt="Open Pair Devices" src="https://github.com/user-attachments/assets/fcf943c0-7556-4e22-bd4f-a2fa244ac59e" />
+<img style="height: 70vh;" alt="Open Pair Devices" src="https://github.com/user-attachments/assets/fcf943c0-7556-4e22-bd4f-a2fa244ac59e" />
 
 ### 3. Use the hamburger icon in the top left to select "Add devices by IP"
 
-<img width="1080" height="2340" alt="Open IP List" src="https://github.com/user-attachments/assets/3b4a6e58-d3dd-4055-95a3-f918d81c322b" />
+<img style="height: 70vh;" alt="Open IP List" src="https://github.com/user-attachments/assets/3b4a6e58-d3dd-4055-95a3-f918d81c322b" />
 
 ### 4. Type in that Tailnet IP address
 
-<img width="1080" height="2340" alt="Enter Tailscale IP Address" src="https://github.com/user-attachments/assets/2b597d27-1996-4ad7-90f9-f0d9d32da675" />
+<img style="height: 70vh;" alt="Enter Tailscale IP Address" src="https://github.com/user-attachments/assets/2b597d27-1996-4ad7-90f9-f0d9d32da675" />
 
 ### 5. Now pair the device from your computer
 
 This does not seem to get the request through correctly from phones for some reason
 
-<img width="1080" height="2340" alt="Accept connection" src="https://github.com/user-attachments/assets/919d14ef-b68b-4d3a-b776-1a85b3522e7b" />
+<img style="height: 70vh;" alt="Accept connection" src="https://github.com/user-attachments/assets/919d14ef-b68b-4d3a-b776-1a85b3522e7b" />
 
 Now both devices know to connect to each other over Tailscales Tailnet instead of LAN internet discovery.
 
