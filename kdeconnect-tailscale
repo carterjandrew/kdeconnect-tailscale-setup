@@ -309,6 +309,8 @@ command_add() {
         printf '%s at %s was already configured.\n' "$label" "$address"
     fi
     printf 'KDE Connect discovery was triggered. Approve the pairing request on both devices.\n'
+    printf '\nWarning: Complete the phone setup steps to finish pairing:\n'
+    printf 'https://github.com/carterjandrew/kdeconnect-tailscale-setup#phone-setup\n'
 }
 
 command_repair() {
