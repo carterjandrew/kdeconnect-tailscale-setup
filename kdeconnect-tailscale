@@ -8,28 +8,21 @@ readonly PROGRAM_VERSION="0.2.0"
 readonly DBUS_SERVICE="org.kde.kdeconnect"
 readonly DBUS_PATH="/modules/kdeconnect"
 readonly DBUS_INTERFACE="org.kde.kdeconnect.daemon"
-readonly FIELD_SEPARATOR=$'\x1f'
 
-declare -a PEER_IDS=()
-declare -a PEER_NAMES=()
-declare -a PEER_DNS_NAMES=()
-declare -a PEER_IPS=()
-declare -a PEER_ONLINE=()
-declare -a CUSTOM_ADDRESSES=()
-SELECTED_PEER=-1
-SELECTED_ADDRESS=-1
+declare -a PEER_LABELS=() PEER_IPS=() CUSTOM_ADDRESSES=()
 
 usage() {
-    cat <<'EOF'
-Usage: kdeconnect-tailscale [command] [arguments]
+    cat <<'HELP'
+Usage: kdeconnect-tailscale [command] [addresses]
 
-Commands:
-  peers                         List Android peers visible to Tailscale
-  add [peer]                    Add a peer to KDE Connect (default command)
-  repair [old-address] [peer]   Replace a KDE Connect address with a peer's current address
+  add [ADDRESS]                   Add an address (default command)
+  repair [OLD_ADDRESS NEW_ADDRESS] Replace an existing address
+  peers                           List discovered peers with IPv4 addresses
 
-A peer may be selected by menu number, hostname, DNS name, stable ID, or IPv4 address.
-EOF
+Without addresses, add and repair use numbered menus of discovered devices.
+Direct addresses are literal strings passed to KDE Connect, without lookup or
+IP validation. Use them for devices that discovery does not list.
+HELP
 }
 
 error() {
@@ -37,208 +30,97 @@ error() {
 }
 
 require_command() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        error "required command '$1' was not found on PATH"
-        return 1
-    fi
-}
-
-check_dependencies() {
-    local command_name=$1
-    local failed=0
-
-    if ((BASH_VERSINFO[0] < 4)); then
-        error "Bash 4 or newer is required"
-        failed=1
-    fi
-    require_command tailscale || failed=1
-    require_command jq || failed=1
-    if [[ $command_name != peers ]]; then
-        require_command busctl || failed=1
-    fi
-    return "$failed"
+    command -v "$1" >/dev/null 2>&1 && return 0
+    error "required command '$1' was not found on PATH"
+    return 1
 }
 
 prompt() {
-    local variable_name=$1
-    local message=$2
-
-    if [[ ! -r /dev/tty ]]; then
-        error "interactive input is unavailable; supply the selection as a command argument"
+    if ! { printf '%s' "$2" >/dev/tty && IFS= read -r "$1" </dev/tty; }; then
+        error "could not read interactive input; supply addresses as command arguments"
         return 1
     fi
-    printf '%s' "$message" >/dev/tty
-    IFS= read -r "${variable_name?}" </dev/tty
 }
 
-read_tailscale_peers() {
-    local status_json backend_state parse_error row
-    local -a rows=()
-
-    if ! status_json=$(tailscale status --json 2>&1); then
-        error "tailscale status failed: $status_json"
-        return 1
-    fi
-    if ! backend_state=$(jq -er '
-        if type != "object" then error("root is not an object")
-        elif (.Peer? != null and (.Peer | type) != "object") then error("Peer is not an object")
-        else (.BackendState // "")
-        end
-    ' <<<"$status_json" 2>&1); then
-        error "invalid or unsupported JSON from tailscale status: $backend_state"
-        return 1
-    fi
-    if [[ ${backend_state,,} != running ]]; then
-        error "Tailscale is not running (backend state: ${backend_state:-unknown})"
-        return 1
-    fi
-
-    if ! parse_error=$(jq -er '
-        def tailscale_ipv4:
-            [(.TailscaleIPs // [])[]
-             | select(type == "string")
-             | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
-             | . as $address
-             | (try (split(".") | map(tonumber)) catch []) as $parts
-             | select(($parts | length) == 4 and $parts[0] == 100 and $parts[1] >= 64 and $parts[1] <= 127)
-             | $address][0] // "";
-        [(.Peer // {}) | to_entries[]
-         | select((.value.OS // "" | ascii_downcase) == "android")
-         | {
-               id: .key,
-               name: (.value.HostName // ""),
-               dns: (.value.DNSName // ""),
-               ip: (.value | tailscale_ipv4),
-               online: (.value.Online // false)
-           }]
-        | sort_by((if .online then 0 else 1 end), (.name | ascii_downcase))
-        | .[]
-        | [.id, .name, .dns, .ip, (.online | tostring)]
-        | join("\u001f")
-    ' <<<"$status_json" 2>&1); then
-        error "could not parse Tailscale peers: $parse_error"
-        return 1
-    fi
-
-    mapfile -t rows <<<"$parse_error"
-    PEER_IDS=()
-    PEER_NAMES=()
-    PEER_DNS_NAMES=()
-    PEER_IPS=()
-    PEER_ONLINE=()
-    if ((${#rows[@]} == 1)) && [[ -z ${rows[0]} ]]; then
-        rows=()
-    fi
-    for row in "${rows[@]}"; do
-        local id name dns ip online
-        IFS=$FIELD_SEPARATOR read -r id name dns ip online <<<"$row"
-        PEER_IDS+=("$id")
-        PEER_NAMES+=("$name")
-        PEER_DNS_NAMES+=("$dns")
-        PEER_IPS+=("$ip")
-        PEER_ONLINE+=("$online")
+# Return the index through the named variable; never evaluate input as arithmetic.
+choose() {
+    local result_variable=$1 message=$2 answer i
+    shift 2
+    local -a options=("$@")
+    ((${#options[@]} > 0)) || { error "no options available"; return 1; }
+    for i in "${!options[@]}"; do
+        printf '%d. %s\n' "$((i + 1))" "${options[i]}"
     done
-}
-
-peer_label() {
-    local index=$1
-    if [[ -n ${PEER_NAMES[index]} ]]; then
-        printf '%s' "${PEER_NAMES[index]}"
-    elif [[ -n ${PEER_DNS_NAMES[index]} ]]; then
-        printf '%s' "${PEER_DNS_NAMES[index]}"
-    else
-        printf '%s' "${PEER_IDS[index]}"
-    fi
-}
-
-print_peers() {
-    local index state ip
-    if ((${#PEER_IDS[@]} == 0)); then
-        printf 'No Android peers are visible in this tailnet.\n'
-        return
-    fi
-    for ((index = 0; index < ${#PEER_IDS[@]}; index++)); do
-        [[ ${PEER_ONLINE[index]} == true ]] && state=online || state=offline
-        ip=${PEER_IPS[index]:-no-supported-IPv4}
-        printf '%d. %s  %s  %s\n' "$((index + 1))" "$(peer_label "$index")" "$ip" "$state"
-    done
-}
-
-select_peer() {
-    local selector=${1:-}
-    local index lowered_selector
-    local -a matches=()
-
-    if ((${#PEER_IDS[@]} == 0)); then
-        error "no Android peers are visible in this tailnet"
-        return 1
-    fi
-    if [[ -z $selector ]]; then
-        print_peers
-        prompt selector "Select a peer number: " || return 1
-    fi
-    if [[ $selector =~ ^[0-9]+$ ]] && ((selector >= 1 && selector <= ${#PEER_IDS[@]})); then
-        SELECTED_PEER=$((selector - 1))
-        return 0
-    fi
-
-    lowered_selector=${selector,,}
-    for ((index = 0; index < ${#PEER_IDS[@]}; index++)); do
-        if [[ $selector == "${PEER_IDS[index]}" || $selector == "${PEER_IPS[index]}" ||
-              $lowered_selector == "${PEER_NAMES[index],,}" || $lowered_selector == "${PEER_DNS_NAMES[index],,}" ]]; then
-            matches+=("$index")
+    prompt answer "$message" || return 1
+    for i in "${!options[@]}"; do
+        if [[ $answer == "$((i + 1))" ]]; then
+            printf -v "$result_variable" '%s' "$i"
+            return 0
         fi
     done
-    if ((${#matches[@]} == 0)); then
-        error "no Android peer matches '$selector'"
+    error "invalid menu number '$answer'"
+    return 1
+}
+
+read_peers() {
+    local status rows label address
+    require_command tailscale && require_command jq || return 1
+    if ! status=$(tailscale status --json 2>&1); then
+        error "tailscale status failed: $status"
         return 1
     fi
-    if ((${#matches[@]} > 1)); then
-        error "peer selector '$selector' is ambiguous; use its stable ID or Tailscale IPv4 address"
+    if ! rows=$(jq -r '
+        if .BackendState != "Running" then error("Tailscale is not running") else
+        [(.Peer // {} | to_entries[])
+         | .key as $id | .value
+         | ([.TailscaleIPs[] | select(contains("."))][0]) as $ip
+         | select($ip != null)
+         | {name: (if (.HostName // "") == "" then $id else .HostName end),
+            os: (.OS // "unknown"), online: (.Online // false), ip: $ip}]
+        | sort_by((if .online then 0 else 1 end), (.name | ascii_downcase))
+        | .[]
+        | [(.name + "  " + .os + "  " + .ip + "  " +
+            (if .online then "online" else "offline" end)), .ip]
+        | join("\u001f")
+        end
+    ' <<<"$status" 2>&1); then
+        error "could not read Tailscale peers: $rows"
         return 1
     fi
-    SELECTED_PEER=${matches[0]}
+    PEER_LABELS=() PEER_IPS=()
+    if [[ -n $rows ]]; then
+        while IFS=$'\x1f' read -r label address; do
+            PEER_LABELS+=("$label")
+            PEER_IPS+=("$address")
+        done <<<"$rows"
+    fi
+    if ((${#PEER_IPS[@]} == 0)); then
+        printf 'No peers with IPv4 addresses found. Use add ADDRESS for an unlisted device.\n'
+    fi
 }
 
 read_custom_addresses() {
-    local output
+    local output addresses
+    require_command busctl && require_command jq || return 1
     if ! output=$(busctl --user --json=short get-property \
         "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_INTERFACE" customDevices 2>&1); then
-        error "could not read KDE Connect custom devices: $output"
-        if [[ -n ${SUDO_USER:-} ]]; then
-            error "run this script as your desktop user, not through sudo"
-        fi
+        error "could not read KDE Connect custom devices (run as your desktop user, without sudo): $output"
         return 1
     fi
-    if ! jq -e '.type == "as" and (.data | type) == "array" and all(.data[]; type == "string")' \
-        >/dev/null 2>&1 <<<"$output"; then
-        error "KDE Connect returned an unsupported customDevices value"
+    if ! addresses=$(jq -er '
+        if .type == "as" and (.data | type) == "array" and
+           all(.data[]; type == "string" and length > 0 and (test("[\\x00-\\x1f\\x7f]") | not))
+        then .data | join("\n") else error("expected nonempty, single-line address strings") end
+    ' <<<"$output" 2>&1); then
+        error "unsupported KDE Connect customDevices value: $addresses"
         return 1
     fi
-    mapfile -t CUSTOM_ADDRESSES < <(jq -r '.data[]' <<<"$output")
+    CUSTOM_ADDRESSES=()
+    [[ -z $addresses ]] || mapfile -t CUSTOM_ADDRESSES <<<"$addresses"
+    return 0
 }
 
-set_custom_addresses() {
-    local -a addresses=("$@")
-    local output
-    if ! output=$(busctl --user set-property \
-        "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_INTERFACE" customDevices \
-        as "${#addresses[@]}" "${addresses[@]}" 2>&1); then
-        error "could not update KDE Connect custom devices: $output"
-        return 1
-    fi
-}
-
-trigger_discovery() {
-    local output
-    if ! output=$(busctl --user call \
-        "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_INTERFACE" forceOnNetworkChange 2>&1); then
-        error "settings were updated, but KDE Connect discovery could not be triggered: $output"
-        return 1
-    fi
-}
-
-array_contains() {
+contains_address() {
     local wanted=$1 item
     shift
     for item in "$@"; do
@@ -247,145 +129,94 @@ array_contains() {
     return 1
 }
 
-select_custom_address() {
-    local selector=${1:-}
-    local index
-
-    if ((${#CUSTOM_ADDRESSES[@]} == 0)); then
-        error "KDE Connect has no custom addresses to repair; use 'add' first"
-        return 1
-    fi
-    if [[ -z $selector ]]; then
-        printf 'KDE Connect custom addresses:\n'
-        for ((index = 0; index < ${#CUSTOM_ADDRESSES[@]}; index++)); do
-            printf '%d. %s\n' "$((index + 1))" "${CUSTOM_ADDRESSES[index]}"
-        done
-        prompt selector "Select the address to replace: " || return 1
-    fi
-    if [[ $selector =~ ^[0-9]+$ ]] && ((selector >= 1 && selector <= ${#CUSTOM_ADDRESSES[@]})); then
-        SELECTED_ADDRESS=$((selector - 1))
-        return 0
-    fi
-    for ((index = 0; index < ${#CUSTOM_ADDRESSES[@]}; index++)); do
-        if [[ $selector == "${CUSTOM_ADDRESSES[index]}" ]]; then
-            SELECTED_ADDRESS=$index
-            return 0
-        fi
-    done
-    error "'$selector' is not a configured KDE Connect custom address"
-    return 1
-}
-
-command_peers() {
-    read_tailscale_peers || return 1
-    print_peers
-}
-
-command_add() {
-    local selector=${1:-} address label changed=0
+# Both interactive and direct commands finish here, with literal addresses.
+update_addresses() {
+    local new_address=$1 old_address=$2 address output changed=0
     local -a updated=()
-
-    read_tailscale_peers || return 1
-    select_peer "$selector" || return 1
-    address=${PEER_IPS[SELECTED_PEER]}
-    label=$(peer_label "$SELECTED_PEER")
-    if [[ -z $address ]]; then
-        error "$label has no IPv4 address in Tailscale's 100.64.0.0/10 range"
+    if [[ -n $old_address ]]; then
+        contains_address "$old_address" "${CUSTOM_ADDRESSES[@]}" || {
+            error "'$old_address' is not a configured KDE Connect custom address"
+            return 1
+        }
+        for address in "${CUSTOM_ADDRESSES[@]}"; do
+            if [[ $address == "$old_address" && $address != "$new_address" ]]; then
+                address=$new_address
+                changed=1
+            fi
+            if ! contains_address "$address" "${updated[@]}"; then
+                updated+=("$address")
+            else
+                changed=1
+            fi
+        done
+    else
+        updated=("${CUSTOM_ADDRESSES[@]}")
+        if ! contains_address "$new_address" "${updated[@]}"; then
+            updated+=("$new_address")
+            changed=1
+        fi
+    fi
+    if ((changed)); then
+        if ! output=$(busctl --user set-property \
+            "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_INTERFACE" customDevices \
+            as "${#updated[@]}" "${updated[@]}" 2>&1); then
+            error "could not update KDE Connect custom devices: $output"
+            return 1
+        fi
+    fi
+    if ! output=$(busctl --user call \
+        "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_INTERFACE" forceOnNetworkChange 2>&1); then
+        error "addresses are configured, but KDE Connect discovery could not be triggered: $output"
         return 1
     fi
-    read_custom_addresses || return 1
-    updated=("${CUSTOM_ADDRESSES[@]}")
-    if ! array_contains "$address" "${updated[@]}"; then
-        updated+=("$address")
-        changed=1
-    fi
-    if ((changed)); then
-        set_custom_addresses "${updated[@]}" || return 1
-    fi
-    trigger_discovery || return 1
-    if ((changed)); then
-        printf 'Added %s at %s.\n' "$label" "$address"
-    else
-        printf '%s at %s was already configured.\n' "$label" "$address"
-    fi
-    printf 'KDE Connect discovery was triggered. Approve the pairing request on both devices.\n'
-    printf '\nWarning: Complete the phone setup steps to finish pairing:\n'
+    printf 'Configured %s. KDE Connect discovery was triggered.\n' "$new_address"
+    printf 'Approve pairing on both devices. For phone setup instructions:\n'
     printf 'https://github.com/carterjandrew/kdeconnect-tailscale-setup#phone-setup\n'
 }
 
-command_repair() {
-    local old_selector=${1:-} peer_selector=${2:-}
-    local old_address new_address label address candidate
-    local -a updated=()
-
+configure() {
+    local command_name=$1 old_address="" new_address index
+    shift
     read_custom_addresses || return 1
-    select_custom_address "$old_selector" || return 1
-    old_address=${CUSTOM_ADDRESSES[SELECTED_ADDRESS]}
-
-    read_tailscale_peers || return 1
-    select_peer "$peer_selector" || return 1
-    new_address=${PEER_IPS[SELECTED_PEER]}
-    label=$(peer_label "$SELECTED_PEER")
-    if [[ -z $new_address ]]; then
-        error "$label has no IPv4 address in Tailscale's 100.64.0.0/10 range"
-        return 1
-    fi
-
-    for address in "${CUSTOM_ADDRESSES[@]}"; do
-        candidate=$address
-        [[ $address == "$old_address" ]] && candidate=$new_address
-        if ! array_contains "$candidate" "${updated[@]}"; then
-            updated+=("$candidate")
+    if (($# > 0)); then
+        new_address=$1
+        if [[ $command_name == repair ]]; then
+            old_address=$1
+            new_address=$2
         fi
-    done
-
-    printf 'Repairing %s: %s -> %s\n' "$label" "$old_address" "$new_address"
-    if [[ $old_address != "$new_address" || ${#updated[@]} -ne ${#CUSTOM_ADDRESSES[@]} ]]; then
-        set_custom_addresses "${updated[@]}" || return 1
+    else
+        if [[ $command_name == repair ]]; then
+            choose index "Select the address to replace: " "${CUSTOM_ADDRESSES[@]}" || return 1
+            old_address=${CUSTOM_ADDRESSES[index]}
+        fi
+        read_peers || return 1
+        choose index "Select a device: " "${PEER_LABELS[@]}" || return 1
+        new_address=${PEER_IPS[index]}
     fi
-    trigger_discovery || return 1
-    printf 'KDE Connect discovery was triggered.\n'
+    update_addresses "$new_address" "$old_address"
 }
 
 main() {
-    local command_name=${1:-add}
-    if (($# > 0)); then
-        shift
-    fi
-
-    case $command_name in
-        -h|--help|help)
-            usage
-            return 0
-            ;;
-        --version)
-            printf '%s %s\n' "$PROGRAM_NAME" "$PROGRAM_VERSION"
-            return 0
-            ;;
-        peers|add|repair)
-            check_dependencies "$command_name" || return 1
-            ;;
-        *)
-            error "unknown command '$command_name'"
-            usage >&2
+    local command_name=${1:-add} address
+    (($# == 0)) || shift
+    case "$command_name/$#" in
+        help/0|-h/0|--help/0) usage; return 0 ;;
+        --version/0) printf '%s %s\n' "$PROGRAM_NAME" "$PROGRAM_VERSION"; return 0 ;;
+        peers/0|add/0|add/1|repair/0|repair/2) ;;
+        *) error "invalid command or argument count; see --help"; return 2 ;;
+    esac
+    for address in "$@"; do
+        if [[ -z $address || $address == -* || $address =~ [[:space:][:cntrl:]] ]]; then
+            error "addresses must be nonempty, contain no whitespace or control characters, and not start with '-'"
             return 2
-            ;;
-    esac
-
-    case $command_name in
-        peers)
-            (($# == 0)) || { error "peers does not accept arguments"; return 2; }
-            command_peers
-            ;;
-        add)
-            (($# <= 1)) || { error "add accepts at most one peer selector"; return 2; }
-            command_add "${1:-}"
-            ;;
-        repair)
-            (($# <= 2)) || { error "repair accepts an old address and an optional peer selector"; return 2; }
-            command_repair "${1:-}" "${2:-}"
-            ;;
-    esac
+        fi
+    done
+    if [[ $command_name == peers ]]; then
+        read_peers || return 1
+        ((${#PEER_LABELS[@]} == 0)) || printf '%s\n' "${PEER_LABELS[@]}"
+        return 0
+    fi
+    configure "$command_name" "$@"
 }
 
 if [[ -z ${BASH_SOURCE[0]:-} || ${BASH_SOURCE[0]} == "$0" ]]; then

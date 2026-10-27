@@ -59,11 +59,11 @@ curl -fsSL https://raw.githubusercontent.com/carterjandrew/kdeconnect-tailscale-
 > 
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/carterjandrew/kdeconnect-tailscale-setup/main/kdeconnect-tailscale \
->     | bash -s -- add my-phone
+>     | bash -s -- add 100.70.1.2
 > ```
 
 
-Running without a command is the same as `add`: it lists Android peers in your tailnet and asks which one to configure.
+Running without a command is the same as `add`: it lists peers with IPv4 addresses in your tailnet and asks which one to configure.
 
 ```bash
 bash kdeconnect-tailscale
@@ -75,11 +75,11 @@ List peers:
 bash kdeconnect-tailscale peers
 ```
 
-Add a peer interactively:
+Add a device interactively, or supply its address directly:
 
 ```bash
 bash kdeconnect-tailscale add
-bash kdeconnect-tailscale add my-phone
+bash kdeconnect-tailscale add 100.70.1.2
 ```
 
 Repair an obsolete custom address by selecting the existing address and its current Tailscale peer:
@@ -88,10 +88,10 @@ Repair an obsolete custom address by selecting the existing address and its curr
 bash kdeconnect-tailscale repair
 ```
 
-The non-interactive form takes the exact old address followed by the Tailscale peer selector:
+The non-interactive form takes the exact old address and a literal replacement address:
 
 ```bash
-bash kdeconnect-tailscale repair 100.70.1.1 my-phone
+bash kdeconnect-tailscale repair 100.70.1.1 100.70.1.2
 ```
 
 After running `add` you will need to manually set the IP address on your phone as well:
@@ -134,8 +134,7 @@ The tailnet policy and local firewall must permit TCP and UDP ports `1714-1764` 
 ## Limitations
 
 - Linux systems with systemd's `busctl` are supported.
-- Only Android Tailscale peers are listed.
-- Only Tailscale IPv4 addresses in `100.64.0.0/10` are used.
+- Discovery lists peers of every OS with an IPv4 address; IPv6-only peers are omitted. Direct address arguments are not restricted to discovered devices or IPv4.
 - The script relies on `tailscale status --json`, whose schema may change.
 - This is an initial setup and repair utility, not an availability monitor.
 
